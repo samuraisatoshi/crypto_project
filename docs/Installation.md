@@ -41,17 +41,42 @@ git clone https://github.com/yourusername/projeto_ml_trade.git
 cd projeto_ml_trade
 ```
 
-2. Create and activate virtual environment:
+2. Set up Python environment:
+
+### Using Conda (Recommended)
+
 ```bash
-# Using venv
+# Install Miniconda (if not already installed)
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+bash Miniconda3-latest-Linux-aarch64.sh
+
+# Create and activate environment
+conda env create -f environment.yml
+conda activate ml_trade_env
+```
+
+### Using venv (Alternative)
+
+```bash
+# Create and activate virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
 venv\Scripts\activate     # Windows
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-3. Install Python dependencies:
+### Verifying Installation
+
 ```bash
-pip install -r requirements.txt
+# Check Python version (should be 3.12.7)
+python --version
+
+# Verify key packages
+python -c "import pandas; print(f'pandas {pandas.__version__}')"
+python -c "import numpy; print(f'numpy {numpy.__version__}')"
+python -c "import talib; print(f'talib {talib.__version__}')"
 ```
 
 4. Set up environment variables:
@@ -86,7 +111,45 @@ streamlit run app_streamlit.py
 http://localhost:8501
 ```
 
+## Environment Management
+
+### Updating Dependencies
+
+With Conda:
+```bash
+conda env update -f environment.yml --prune
+```
+
+With pip:
+```bash
+pip install -r requirements.txt --upgrade
+```
+
+### Removing Environment
+
+With Conda:
+```bash
+conda deactivate
+conda env remove -n ml_trade_env
+```
+
+With venv:
+```bash
+deactivate
+rm -rf venv
+```
+
 ## Common Issues
+
+### Python Version
+If you see errors about Python version:
+```bash
+# Check current version
+python --version
+
+# With Conda, you can install specific version:
+conda install python=3.12.7
+```
 
 ### TA-Lib Installation
 
