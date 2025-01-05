@@ -55,13 +55,28 @@ brew install ta-lib
 Download and install [TA-Lib](http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-msvc.zip)
 
 3. Set up Python environment:
+
+**Using Conda (Recommended):**
+```bash
+# Create and activate conda environment
+conda env create -f environment.yml
+conda activate ml_trade_env
+
+# Install the package in development mode
+pip install -e .
+```
+
+**Using venv (Alternative):**
 ```bash
 # Create and activate virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
 venv\Scripts\activate     # Windows
 
-# Install the package and dependencies
+# Install dependencies
+pip install -r requirements.txt
+
+# Install the package in development mode
 pip install -e .
 ```
 
