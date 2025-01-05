@@ -62,30 +62,25 @@ source venv/bin/activate  # Linux/macOS
 venv\Scripts\activate     # Windows
 
 # Install the package and dependencies
-python setup.py install
+pip install -e .
 ```
 
-4. Run environment setup:
-```bash
-python setup_env.py
-```
-
-5. Configure settings:
+4. Configure settings:
 ```bash
 # Edit attribs.env with your Binance API credentials and preferences
 nano attribs.env
 ```
 
-6. Run the application:
+5. Run the application:
 ```bash
 streamlit run app_streamlit.py
 ```
 
-The setup script will:
+The installation process will:
+- Install all required dependencies
 - Create necessary directories
 - Set up environment configuration
 - Verify system requirements
-- Install dependencies
 
 ## Documentation
 
