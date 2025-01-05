@@ -30,31 +30,62 @@ A comprehensive cryptocurrency trading analysis and backtesting platform with su
   - Volatility analysis
   - Liquidity metrics
 
-## Quick Start
+## Installation
 
-1. Install dependencies:
+1. Clone the repository:
 ```bash
-# Install system requirements (Ubuntu/Debian)
-sudo apt-get install -y build-essential python3-dev python3-pip ta-lib
+git clone https://github.com/yourusername/projeto_ml_trade.git
+cd projeto_ml_trade
+```
 
+2. Install system requirements:
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential python3-dev python3-pip ta-lib
+```
+
+**macOS:**
+```bash
+brew install ta-lib
+```
+
+**Windows:**
+Download and install [TA-Lib](http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-msvc.zip)
+
+3. Set up Python environment:
+```bash
 # Create and activate virtual environment
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # Linux/macOS
+venv\Scripts\activate     # Windows
 
-# Install Python packages
-pip install -r requirements.txt
+# Install the package and dependencies
+python setup.py install
 ```
 
-2. Configure environment:
+4. Run environment setup:
 ```bash
-cp attribs.env.example attribs.env
-# Edit attribs.env with your settings
+python setup_env.py
 ```
 
-3. Run the application:
+5. Configure settings:
+```bash
+# Edit attribs.env with your Binance API credentials and preferences
+nano attribs.env
+```
+
+6. Run the application:
 ```bash
 streamlit run app_streamlit.py
 ```
+
+The setup script will:
+- Create necessary directories
+- Set up environment configuration
+- Verify system requirements
+- Install dependencies
 
 ## Documentation
 
