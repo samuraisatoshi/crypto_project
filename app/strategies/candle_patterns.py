@@ -1,241 +1,149 @@
 """
-Candlestick pattern detection module.
+Candlestick pattern trading strategy.
 """
-from typing import Dict, List, Optional, Tuple
+from typing import List, Dict
 import pandas as pd
-import numpy as np
+from utils.indicators import find_candlestick_patterns
 from utils.logging_helper import LoggingHelper
+from .base import BaseStrategy
 
-def is_doji(open_price: float, high: float, low: float, close: float, threshold: float = 0.1) -> bool:
-    """
-    Check if candle is a doji pattern.
-    
-    Args:
-        open_price: Opening price
-        high: High price
-        low: Low price
-        close: Closing price
-        threshold: Maximum body/wick ratio to consider as doji
+class CandlePatternStrategy(BaseStrategy):
+    def __init__(self,
+                confidence_threshold: float = 0.6):
+        """
+        Initialize Candle Pattern strategy.
         
-    Returns:
-        bool: True if candle is a doji
-    """
-    body = abs(close - open_price)
-    upper_wick = high - max(open_price, close)
-    lower_wick = min(open_price, close) - low
-    
-    if body == 0:
-        return True
+        Args:
+            confidence_threshold: Minimum confidence level for signals
+        """
+        super().__init__()
+        self.confidence_threshold = confidence_threshold
         
-    body_to_wick_ratio = body / (upper_wick + lower_wick) if (upper_wick + lower_wick) > 0 else float('inf')
-    return body_to_wick_ratio <= threshold
+        LoggingHelper.log(f"Initialized Candle Pattern Strategy with parameters:")
+        LoggingHelper.log(f"Confidence Threshold: {confidence_threshold}")
 
-def is_hammer(open_price: float, high: float, low: float, close: float) -> bool:
-    """
-    Check if candle is a hammer pattern.
-    
-    Args:
-        open_price: Opening price
-        high: High price
-        low: Low price
-        close: Closing price
+    def generate_signals(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Generate trading signals based on candlestick patterns.
         
-    Returns:
-        bool: True if candle is a hammer
-    """
-    body = abs(close - open_price)
-    upper_wick = high - max(open_price, close)
-    lower_wick = min(open_price, close) - low
-    
-    if body == 0:
-        return False
-        
-    # Lower wick should be at least 2x the body
-    if lower_wick < body * 2:
-        return False
-        
-    # Upper wick should be small
-    if upper_wick > body * 0.5:
-        return False
-        
-    return True
-
-def is_shooting_star(open_price: float, high: float, low: float, close: float) -> bool:
-    """
-    Check if candle is a shooting star pattern.
-    
-    Args:
-        open_price: Opening price
-        high: High price
-        low: Low price
-        close: Closing price
-        
-    Returns:
-        bool: True if candle is a shooting star
-    """
-    body = abs(close - open_price)
-    upper_wick = high - max(open_price, close)
-    lower_wick = min(open_price, close) - low
-    
-    if body == 0:
-        return False
-        
-    # Upper wick should be at least 2x the body
-    if upper_wick < body * 2:
-        return False
-        
-    # Lower wick should be small
-    if lower_wick > body * 0.5:
-        return False
-        
-    return True
-
-def is_engulfing(current: Dict[str, float], previous: Dict[str, float]) -> Optional[str]:
-    """
-    Check if current candle engulfs previous candle.
-    
-    Args:
-        current: Current candle OHLC prices
-        previous: Previous candle OHLC prices
-        
-    Returns:
-        str: 'bullish', 'bearish', or None
-    """
-    current_body = current['close'] - current['open']
-    previous_body = previous['close'] - previous['open']
-    
-    # Must be opposite colors
-    if (current_body * previous_body >= 0):
-        return None
-        
-    if current_body > 0:  # Current is bullish
-        if (current['open'] <= previous['close'] and
-            current['close'] >= previous['open']):
-            return 'bullish'
-    else:  # Current is bearish
-        if (current['open'] >= previous['close'] and
-            current['close'] <= previous['open']):
-            return 'bearish'
+        Args:
+            df: DataFrame with price data
             
-    return None
+        Returns:
+            List of signal dictionaries
+        """
+        signals = []
+        
+        # Find patterns
+        df = find_candlestick_patterns(df)
+        
+        # Get current values
+        current = df.iloc[-1]
+        
+        # Calculate base confidence
+        base_confidence = 0.6  # Base confidence level
+        
+        # Generate signals based on patterns
+        if current['hammer']:
+            confidence = base_confidence * 1.1  # Increase confidence for hammer
+            if confidence >= self.confidence_threshold:
+                signals.append({
+                    'type': 'long',
+                    'confidence': confidence,
+                    'price': current['close'],
+                    'pattern': 'hammer'
+                })
+                LoggingHelper.log(f"Generated hammer signal with confidence {confidence:.2f}")
+                
+        if current['shooting_star']:
+            confidence = base_confidence * 1.1
+            if confidence >= self.confidence_threshold:
+                signals.append({
+                    'type': 'short',
+                    'confidence': confidence,
+                    'price': current['close'],
+                    'pattern': 'shooting_star'
+                })
+                LoggingHelper.log(f"Generated shooting star signal with confidence {confidence:.2f}")
+                
+        if current['engulfing'] == 'bullish':
+            confidence = base_confidence * 1.2  # Higher confidence for engulfing
+            if confidence >= self.confidence_threshold:
+                signals.append({
+                    'type': 'long',
+                    'confidence': confidence,
+                    'price': current['close'],
+                    'pattern': 'bullish_engulfing'
+                })
+                LoggingHelper.log(f"Generated bullish engulfing signal with confidence {confidence:.2f}")
+                
+        if current['engulfing'] == 'bearish':
+            confidence = base_confidence * 1.2
+            if confidence >= self.confidence_threshold:
+                signals.append({
+                    'type': 'short',
+                    'confidence': confidence,
+                    'price': current['close'],
+                    'pattern': 'bearish_engulfing'
+                })
+                LoggingHelper.log(f"Generated bearish engulfing signal with confidence {confidence:.2f}")
+        
+        return signals
 
-def find_patterns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Find candlestick patterns in price data.
-    
-    Args:
-        df: DataFrame with OHLCV data
+    def should_exit(self, df: pd.DataFrame, current_idx: int, position: Dict) -> bool:
+        """
+        Determine if current position should be exited.
         
-    Returns:
-        DataFrame with pattern columns added
-    """
-    LoggingHelper.log("Finding candlestick patterns...")
-    
-    # Add pattern columns
-    df['doji'] = df.apply(lambda x: is_doji(x['open'], x['high'], x['low'], x['close']), axis=1)
-    df['hammer'] = df.apply(lambda x: is_hammer(x['open'], x['high'], x['low'], x['close']), axis=1)
-    df['shooting_star'] = df.apply(lambda x: is_shooting_star(x['open'], x['high'], x['low'], x['close']), axis=1)
-    
-    # Find engulfing patterns
-    engulfing = []
-    for i in range(len(df)):
-        if i == 0:
-            engulfing.append(None)
-            continue
+        Args:
+            df: DataFrame with price data
+            current_idx: Current index in DataFrame
+            position: Current position information
             
-        current = {
-            'open': df.iloc[i]['open'],
-            'high': df.iloc[i]['high'],
-            'low': df.iloc[i]['low'],
-            'close': df.iloc[i]['close']
-        }
+        Returns:
+            bool: True if position should be exited
+        """
+        if current_idx < 1:
+            return False
+            
+        # Find patterns
+        df = find_candlestick_patterns(df.iloc[:current_idx + 1])
+        current = df.iloc[-1]
         
-        previous = {
-            'open': df.iloc[i-1]['open'],
-            'high': df.iloc[i-1]['high'],
-            'low': df.iloc[i-1]['low'],
-            'close': df.iloc[i-1]['close']
-        }
+        # Exit long position
+        if position['type'] == 'long':
+            if (current['shooting_star'] or  # Strong bearish pattern
+                current['engulfing'] == 'bearish'):  # Bearish engulfing
+                LoggingHelper.log("Exiting long position on bearish pattern")
+                return True
+                
+        # Exit short position
+        elif position['type'] == 'short':
+            if (current['hammer'] or  # Strong bullish pattern
+                current['engulfing'] == 'bullish'):  # Bullish engulfing
+                LoggingHelper.log("Exiting short position on bullish pattern")
+                return True
         
-        engulfing.append(is_engulfing(current, previous))
-    
-    df['engulfing'] = engulfing
-    
-    LoggingHelper.log("Found patterns:")
-    LoggingHelper.log(f"Doji: {df['doji'].sum()}")
-    LoggingHelper.log(f"Hammer: {df['hammer'].sum()}")
-    LoggingHelper.log(f"Shooting Star: {df['shooting_star'].sum()}")
-    LoggingHelper.log(f"Engulfing: {df['engulfing'].count()}")
-    
-    return df
+        return False
 
-def get_pattern_signals(df: pd.DataFrame) -> List[Dict]:
-    """
-    Generate trading signals from candlestick patterns.
-    
-    Args:
-        df: DataFrame with pattern columns
+    def calculate_position_size(self, df: pd.DataFrame, signal: Dict) -> float:
+        """
+        Calculate position size based on pattern strength.
         
-    Returns:
-        List of signal dictionaries
-    """
-    signals = []
-    
-    # Check latest candle
-    current = df.iloc[-1]
-    
-    # Bullish signals
-    if current['hammer']:
-        signals.append({
-            'type': 'long',
-            'confidence': 0.6,
-            'price': current['close'],
-            'pattern': 'hammer'
-        })
-        
-    if current['engulfing'] == 'bullish':
-        signals.append({
-            'type': 'long', 
-            'confidence': 0.7,
-            'price': current['close'],
-            'pattern': 'bullish_engulfing'
-        })
-        
-    # Bearish signals
-    if current['shooting_star']:
-        signals.append({
-            'type': 'short',
-            'confidence': 0.6,
-            'price': current['close'],
-            'pattern': 'shooting_star'
-        })
-        
-    if current['engulfing'] == 'bearish':
-        signals.append({
-            'type': 'short',
-            'confidence': 0.7,
-            'price': current['close'],
-            'pattern': 'bearish_engulfing'
-        })
-        
-    # Doji signals depend on trend
-    if current['doji']:
-        # Check trend using last 5 candles
-        trend = 'up' if df['close'].tail(5).is_monotonic_increasing else 'down'
-        
-        if trend == 'up':
-            signals.append({
-                'type': 'short',
-                'confidence': 0.5,
-                'price': current['close'],
-                'pattern': 'doji_top'
-            })
-        else:
-            signals.append({
-                'type': 'long',
-                'confidence': 0.5,
-                'price': current['close'],
-                'pattern': 'doji_bottom'
-            })
+        Args:
+            df: DataFrame with price data
+            signal: Signal dictionary with confidence level
             
-    return signals
+        Returns:
+            float: Position size multiplier (0.0 to 1.0)
+        """
+        # Base size from signal confidence
+        base_size = 0.5
+        
+        # Adjust based on pattern type
+        pattern_multiplier = 1.0
+        if signal['pattern'] in ['bullish_engulfing', 'bearish_engulfing']:
+            pattern_multiplier = 1.2  # Increase size for engulfing patterns
+        elif signal['pattern'] in ['hammer', 'shooting_star']:
+            pattern_multiplier = 1.1  # Slight increase for hammer/shooting star
+            
+        return min(base_size * pattern_multiplier * signal['confidence'], 1.0)
