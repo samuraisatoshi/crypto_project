@@ -1,107 +1,161 @@
+"""
+Trend analysis trading strategy.
+"""
+from typing import List, Dict
 import pandas as pd
-import numpy as np
+from utils.market_regime import identify_trend, analyze_price_action, get_support_resistance
+from utils.logging_helper import LoggingHelper
+from .base import BaseStrategy
 
-class TrendAnalysis:
-    """
-    Classe utilitária para análise de tendências.
-    Fornece métodos comuns que podem ser usados por diferentes estratégias.
-    """
-    @staticmethod
-    def detect_trend(df: pd.DataFrame, 
-                    ema_short: int = 8,
-                    ema_medium: int = 21,
-                    ema_long: int = 200,
-                    strict: bool = False) -> pd.Series:
+class TrendAnalysisStrategy(BaseStrategy):
+    def __init__(self,
+                ema_periods: List[int] = [20, 50, 200],
+                slope_period: int = 5,
+                lookback: int = 20,
+                confidence_threshold: float = 0.6):
         """
-        Detecta tendência usando EMAs.
+        Initialize Trend Analysis strategy.
         
         Args:
-            df: DataFrame com dados OHLCV e EMAs
-            ema_short: Período da EMA curta
-            ema_medium: Período da EMA média
-            ema_long: Período da EMA longa
-            strict: Se True, usa critérios mais estritos
-            
-        Returns:
-            pd.Series: 1 (alta), -1 (baixa), 0 (neutro)
+            ema_periods: List of EMA periods for trend analysis
+            slope_period: Period for slope calculation
+            lookback: Period for price action analysis
+            confidence_threshold: Minimum confidence level for signals
         """
-        trend = pd.Series(0, index=df.index)
+        super().__init__()
+        self.ema_periods = ema_periods
+        self.slope_period = slope_period
+        self.lookback = lookback
+        self.confidence_threshold = confidence_threshold
         
-        if strict:
-            # Critérios estritos: EMAs alinhadas em ordem
-            uptrend = (df[f'ema_{ema_short}'] > df[f'ema_{ema_medium}']) & \
-                     (df[f'ema_{ema_medium}'] > df[f'ema_{ema_long}']) & \
-                     (df['close'] > df[f'ema_{ema_long}'])
-                     
-            downtrend = (df[f'ema_{ema_short}'] < df[f'ema_{ema_medium}']) & \
-                       (df[f'ema_{ema_medium}'] < df[f'ema_{ema_long}']) & \
-                       (df['close'] < df[f'ema_{ema_long}'])
-        else:
-            # Critérios flexíveis: EMA curta e preço apenas
-            uptrend = (df[f'ema_{ema_short}'] > df[f'ema_{ema_medium}']) & \
-                     (df['close'] > df[f'ema_{ema_long}'])
-                     
-            downtrend = (df[f'ema_{ema_short}'] < df[f'ema_{ema_medium}']) & \
-                       (df['close'] < df[f'ema_{ema_long}'])
-        
-        trend[uptrend] = 1
-        trend[downtrend] = -1
-        
-        return trend
-    
-    @staticmethod
-    def detect_swing_points(df: pd.DataFrame, 
-                          lookback: int = 5,
-                          price_col: str = 'close') -> tuple:
+        LoggingHelper.log(f"Initialized Trend Analysis Strategy with parameters:")
+        LoggingHelper.log(f"EMA Periods: {ema_periods}")
+        LoggingHelper.log(f"Slope Period: {slope_period}")
+        LoggingHelper.log(f"Lookback: {lookback}")
+        LoggingHelper.log(f"Confidence Threshold: {confidence_threshold}")
+
+    def generate_signals(self, df: pd.DataFrame) -> List[Dict]:
         """
-        Detecta pontos de swing (pivôs) no preço.
+        Generate trading signals based on trend analysis.
         
         Args:
-            df: DataFrame com dados OHLCV
-            lookback: Número de barras para olhar para cada lado
-            price_col: Coluna de preço a usar
+            df: DataFrame with price data
             
         Returns:
-            tuple: (swing_highs, swing_lows) Series booleanas
+            List of signal dictionaries
         """
-        highs = pd.Series(False, index=df.index)
-        lows = pd.Series(False, index=df.index)
+        signals = []
         
-        for i in range(lookback, len(df) - lookback):
-            price_window = df[price_col].iloc[i-lookback:i+lookback+1]
-            center_price = price_window.iloc[lookback]
+        # Get trend analysis
+        trend_info = identify_trend(df, self.ema_periods, self.slope_period)
+        
+        # Get price action analysis
+        price_action = analyze_price_action(df, self.lookback)
+        
+        # Get support/resistance levels
+        support, resistance = get_support_resistance(df)
+        
+        # Calculate base confidence from trend strength
+        base_confidence = 0.6
+        if trend_info['trend'] in ['strong_bullish', 'strong_bearish']:
+            base_confidence *= 1.2
+        elif trend_info['trend'] in ['weak_bullish', 'weak_bearish']:
+            base_confidence *= 0.9
             
-            # Swing high
-            if center_price > price_window.iloc[:lookback].max() and \
-               center_price > price_window.iloc[lookback+1:].max():
-                highs.iloc[i] = True
+        # Adjust confidence based on price action
+        if price_action['is_trending']:
+            base_confidence *= 1.1
             
-            # Swing low
-            if center_price < price_window.iloc[:lookback].min() and \
-               center_price < price_window.iloc[lookback+1:].min():
-                lows.iloc[i] = True
+        confidence = min(base_confidence, 1.0)
+        
+        # Generate signals based on trend analysis
+        if trend_info['trend'] in ['strong_bullish', 'weak_bullish']:
+            if confidence >= self.confidence_threshold:
+                signals.append({
+                    'type': 'long',
+                    'confidence': confidence,
+                    'price': df['close'].iloc[-1],
+                    'pattern': f"trend_{trend_info['trend']}",
+                    'support': support
+                })
+                LoggingHelper.log(f"Generated bullish trend signal with confidence {confidence:.2f}")
                 
-        return highs, lows
-    
-    @staticmethod
-    def calculate_momentum(df: pd.DataFrame,
-                         col: str = 'close',
-                         period: int = 14) -> pd.Series:
+        elif trend_info['trend'] in ['strong_bearish', 'weak_bearish']:
+            if confidence >= self.confidence_threshold:
+                signals.append({
+                    'type': 'short',
+                    'confidence': confidence,
+                    'price': df['close'].iloc[-1],
+                    'pattern': f"trend_{trend_info['trend']}",
+                    'resistance': resistance
+                })
+                LoggingHelper.log(f"Generated bearish trend signal with confidence {confidence:.2f}")
+        
+        return signals
+
+    def should_exit(self, df: pd.DataFrame, current_idx: int, position: Dict) -> bool:
         """
-        Calcula momentum do preço.
+        Determine if current position should be exited.
         
         Args:
-            df: DataFrame com dados
-            col: Coluna para calcular momentum
-            period: Período do momentum
+            df: DataFrame with price data
+            current_idx: Current index in DataFrame
+            position: Current position information
             
         Returns:
-            pd.Series: Momentum normalizado (-1 a 1)
+            bool: True if position should be exited
         """
-        # Calcular variação percentual
-        momentum = df[col].pct_change(period)
+        if current_idx < 1:
+            return False
+            
+        # Get trend analysis
+        trend_info = identify_trend(
+            df.iloc[:current_idx + 1],
+            self.ema_periods,
+            self.slope_period
+        )
         
-        # Normalizar entre -1 e 1
-        momentum = momentum / momentum.abs().rolling(period*2).max()
+        # Exit long position
+        if position['type'] == 'long':
+            if trend_info['trend'] in ['strong_bearish', 'weak_bearish']:
+                LoggingHelper.log("Exiting long position on bearish trend")
+                return True
+                
+        # Exit short position
+        elif position['type'] == 'short':
+            if trend_info['trend'] in ['strong_bullish', 'weak_bullish']:
+                LoggingHelper.log("Exiting short position on bullish trend")
+                return True
         
-        return momentum
+        return False
+
+    def calculate_position_size(self, df: pd.DataFrame, signal: Dict) -> float:
+        """
+        Calculate position size based on trend strength.
+        
+        Args:
+            df: DataFrame with price data
+            signal: Signal dictionary with confidence level
+            
+        Returns:
+            float: Position size multiplier (0.0 to 1.0)
+        """
+        # Base size from signal confidence
+        base_size = 0.5
+        
+        # Get trend analysis
+        trend_info = identify_trend(df, self.ema_periods, self.slope_period)
+        
+        # Adjust based on trend strength
+        trend_multiplier = 1.0
+        if trend_info['trend'].startswith('strong'):
+            trend_multiplier = 1.2
+        elif trend_info['trend'].startswith('weak'):
+            trend_multiplier = 0.8
+            
+        # Adjust based on slope alignment
+        if (signal['type'] == 'long' and trend_info['slopes_bullish']) or \
+           (signal['type'] == 'short' and trend_info['slopes_bearish']):
+            trend_multiplier *= 1.1
+        
+        return min(base_size * trend_multiplier * signal['confidence'], 1.0)
