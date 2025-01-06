@@ -1,11 +1,14 @@
 """
-Volatility-based trading strategy implementation.
+Volatility-based trading strategy.
 """
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict
 import pandas as pd
-import numpy as np
-from utils.indicators import calculate_atr, calculate_bollinger_bands
-from utils.volatility_metrics import calculate_volatility_ratio
+from utils.volatility_metrics import (
+    analyze_volatility,
+    detect_breakout,
+    calculate_volatility_score,
+    adjust_position_size
+)
 from utils.logging_helper import LoggingHelper
 from .base import BaseStrategy
 
@@ -15,8 +18,8 @@ class VolatilityStrategy(BaseStrategy):
                 bb_period: int = 20,
                 bb_std: float = 2.0,
                 vol_lookback: int = 20,
-                vol_threshold: float = 1.5,  # Threshold para expansão de volatilidade
-                range_threshold: float = 0.8,  # % do ATR para considerar range significativo
+                vol_threshold: float = 1.5,
+                range_threshold: float = 0.8,
                 confidence_threshold: float = 0.6):
         """
         Initialize Volatility strategy.
@@ -48,64 +51,6 @@ class VolatilityStrategy(BaseStrategy):
         LoggingHelper.log(f"Range Threshold: {range_threshold}")
         LoggingHelper.log(f"Confidence Threshold: {confidence_threshold}")
 
-    def analyze_volatility(self, df: pd.DataFrame) -> Dict[str, float]:
-        """
-        Analyze current volatility conditions.
-        
-        Args:
-            df: DataFrame with price data
-            
-        Returns:
-            Dictionary with volatility metrics
-        """
-        # Calcular razão de volatilidade atual/histórica
-        current_vol = df['atr'].iloc[-1]
-        historical_vol = df['atr'].tail(self.vol_lookback).mean()
-        vol_ratio = current_vol / historical_vol
-        
-        # Calcular range da vela atual como % do ATR
-        current = df.iloc[-1]
-        candle_range = current['high'] - current['low']
-        range_ratio = candle_range / current_vol
-        
-        # Verificar posição em relação às Bollinger Bands
-        bb_position = (current['close'] - current['bb_lower']) / (current['bb_upper'] - current['bb_lower'])
-        
-        # Detectar squeeze das Bollinger Bands
-        bb_width = (current['bb_upper'] - current['bb_lower']) / current['bb_middle']
-        historical_width = ((df['bb_upper'] - df['bb_lower']) / df['bb_middle']).tail(self.vol_lookback).mean()
-        squeeze_ratio = bb_width / historical_width
-        
-        return {
-            'vol_ratio': vol_ratio,
-            'range_ratio': range_ratio,
-            'bb_position': bb_position,
-            'squeeze_ratio': squeeze_ratio,
-            'is_high_vol': vol_ratio > self.vol_threshold,
-            'is_significant_range': range_ratio > self.range_threshold
-        }
-
-    def detect_breakout(self, df: pd.DataFrame) -> Optional[str]:
-        """
-        Detect potential breakout direction.
-        
-        Args:
-            df: DataFrame with price data
-            
-        Returns:
-            str: 'up', 'down', or None
-        """
-        current = df.iloc[-1]
-        previous = df.iloc[-2]
-        
-        # Verificar rompimento das Bollinger Bands
-        if current['close'] > current['bb_upper'] and previous['close'] <= previous['bb_upper']:
-            return 'up'
-        elif current['close'] < current['bb_lower'] and previous['close'] >= previous['bb_lower']:
-            return 'down'
-            
-        return None
-
     def generate_signals(self, df: pd.DataFrame) -> List[Dict]:
         """
         Generate trading signals based on volatility analysis.
@@ -118,77 +63,69 @@ class VolatilityStrategy(BaseStrategy):
         """
         signals = []
         
-        # Calculate indicators
-        df['atr'] = calculate_atr(df['high'], df['low'], df['close'], self.atr_period)
-        bb_data = calculate_bollinger_bands(df['close'], self.bb_period, self.bb_std)
-        df['bb_upper'] = bb_data['bb_upper']
-        df['bb_middle'] = bb_data['bb_middle']
-        df['bb_lower'] = bb_data['bb_lower']
-        
-        # Get current values
-        current = df.iloc[-1]
-        
-        # Analyze volatility conditions
-        vol_analysis = self.analyze_volatility(df)
+        # Get volatility analysis
+        vol_analysis = analyze_volatility(
+            df,
+            self.vol_lookback,
+            self.atr_period,
+            self.bb_period,
+            self.bb_std
+        )
         
         # Detect breakout
-        breakout = self.detect_breakout(df)
+        breakout = detect_breakout(df)
         
-        # Calculate base confidence from volatility
-        base_confidence = min(vol_analysis['vol_ratio'] / self.vol_threshold, 1.0)
-        
-        # Adjust confidence based on range and squeeze
-        if vol_analysis['is_significant_range']:
-            base_confidence *= 1.2
-        if vol_analysis['squeeze_ratio'] < 0.8:  # Squeeze setup
-            base_confidence *= 1.1
-            
-        confidence = min(base_confidence, 1.0)
+        # Calculate volatility score
+        vol_score = calculate_volatility_score(
+            df,
+            self.vol_threshold,
+            self.range_threshold
+        )
         
         # Generate signals based on volatility and breakouts
         if breakout == 'up' and vol_analysis['is_high_vol']:
-            if confidence >= self.confidence_threshold:
+            if vol_score >= self.confidence_threshold:
                 signals.append({
                     'type': 'long',
-                    'confidence': confidence,
-                    'price': current['close'],
+                    'confidence': vol_score,
+                    'price': df['close'].iloc[-1],
                     'pattern': 'volatility_breakout_up',
-                    'atr': current['atr']
+                    'atr': df['atr'].iloc[-1]
                 })
-                LoggingHelper.log(f"Generated bullish breakout signal with confidence {confidence:.2f}")
+                LoggingHelper.log(f"Generated bullish breakout signal with confidence {vol_score:.2f}")
                 
         elif breakout == 'down' and vol_analysis['is_high_vol']:
-            if confidence >= self.confidence_threshold:
+            if vol_score >= self.confidence_threshold:
                 signals.append({
                     'type': 'short',
-                    'confidence': confidence,
-                    'price': current['close'],
+                    'confidence': vol_score,
+                    'price': df['close'].iloc[-1],
                     'pattern': 'volatility_breakout_down',
-                    'atr': current['atr']
+                    'atr': df['atr'].iloc[-1]
                 })
-                LoggingHelper.log(f"Generated bearish breakout signal with confidence {confidence:.2f}")
+                LoggingHelper.log(f"Generated bearish breakout signal with confidence {vol_score:.2f}")
         
-        # Gerar sinais de mean reversion em condições específicas
-        elif vol_analysis['squeeze_ratio'] < 0.7:  # Forte squeeze
-            if vol_analysis['bb_position'] > 0.9:  # Próximo à banda superior
+        # Mean reversion signals in squeeze conditions
+        elif vol_analysis['is_squeeze']:
+            if vol_analysis['bb_position'] > 0.9:  # Near upper band
                 signals.append({
                     'type': 'short',
-                    'confidence': confidence * 0.8,  # Reduzir confiança para mean reversion
-                    'price': current['close'],
+                    'confidence': vol_score * 0.8,  # Lower confidence for mean reversion
+                    'price': df['close'].iloc[-1],
                     'pattern': 'volatility_mean_reversion_high',
-                    'atr': current['atr']
+                    'atr': df['atr'].iloc[-1]
                 })
-                LoggingHelper.log(f"Generated mean reversion short signal with confidence {confidence*0.8:.2f}")
+                LoggingHelper.log(f"Generated mean reversion short signal with confidence {vol_score*0.8:.2f}")
                 
-            elif vol_analysis['bb_position'] < 0.1:  # Próximo à banda inferior
+            elif vol_analysis['bb_position'] < 0.1:  # Near lower band
                 signals.append({
                     'type': 'long',
-                    'confidence': confidence * 0.8,
-                    'price': current['close'],
+                    'confidence': vol_score * 0.8,
+                    'price': df['close'].iloc[-1],
                     'pattern': 'volatility_mean_reversion_low',
-                    'atr': current['atr']
+                    'atr': df['atr'].iloc[-1]
                 })
-                LoggingHelper.log(f"Generated mean reversion long signal with confidence {confidence*0.8:.2f}")
+                LoggingHelper.log(f"Generated mean reversion long signal with confidence {vol_score*0.8:.2f}")
         
         return signals
 
@@ -207,26 +144,30 @@ class VolatilityStrategy(BaseStrategy):
         if current_idx < 1:
             return False
             
-        current = df.iloc[current_idx]
-        
-        # Analyze current volatility
-        vol_analysis = self.analyze_volatility(
-            df.iloc[:current_idx + 1]
+        # Get volatility analysis
+        vol_analysis = analyze_volatility(
+            df.iloc[:current_idx + 1],
+            self.vol_lookback,
+            self.atr_period,
+            self.bb_period,
+            self.bb_std
         )
+        
+        current = df.iloc[current_idx]
         
         # Exit long position
         if position['type'] == 'long':
-            # Exit on volatility contraction ou mean reversion
-            if (vol_analysis['vol_ratio'] < 0.7 or  # Contração significativa
-                current['close'] < current['bb_middle']):  # Abaixo da média
+            # Exit on volatility contraction or mean reversion
+            if (vol_analysis['vol_ratio'] < 0.7 or  # Significant contraction
+                current['close'] < current['bb_middle']):  # Below middle band
                 LoggingHelper.log("Exiting long position on volatility contraction")
                 return True
                 
         # Exit short position
         elif position['type'] == 'short':
-            # Exit on volatility contraction ou mean reversion
-            if (vol_analysis['vol_ratio'] < 0.7 or  # Contração significativa
-                current['close'] > current['bb_middle']):  # Acima da média
+            # Exit on volatility contraction or mean reversion
+            if (vol_analysis['vol_ratio'] < 0.7 or  # Significant contraction
+                current['close'] > current['bb_middle']):  # Above middle band
                 LoggingHelper.log("Exiting short position on volatility contraction")
                 return True
         
@@ -234,7 +175,7 @@ class VolatilityStrategy(BaseStrategy):
 
     def calculate_position_size(self, df: pd.DataFrame, signal: Dict) -> float:
         """
-        Calculate position size based on volatility and signal confidence.
+        Calculate position size based on volatility conditions.
         
         Args:
             df: DataFrame with price data
@@ -243,20 +184,4 @@ class VolatilityStrategy(BaseStrategy):
         Returns:
             float: Position size multiplier (0.0 to 1.0)
         """
-        # Base size from signal confidence
-        base_size = 0.5
-        
-        # Analyze volatility
-        vol_analysis = self.analyze_volatility(df)
-        
-        # Adjust based on volatility conditions
-        vol_multiplier = 1.0
-        if vol_analysis['vol_ratio'] > self.vol_threshold:
-            vol_multiplier = 0.8  # Reduzir exposição em alta volatilidade
-        elif vol_analysis['squeeze_ratio'] < 0.8:
-            vol_multiplier = 1.2  # Aumentar exposição em squeeze
-            
-        # Adjust based on range significance
-        range_multiplier = 1.2 if vol_analysis['is_significant_range'] else 0.8
-        
-        return min(base_size * vol_multiplier * range_multiplier * signal['confidence'], 1.0)
+        return adjust_position_size(0.5, df, self.vol_threshold)
